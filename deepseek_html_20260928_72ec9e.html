@@ -1,0 +1,1436 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>贪吃蛇</title>
+<style>
+  body { background:#111; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; margin:0; font-family:sans-serif; color:#eee; }
+
+  /* 画布 + HUD 的容器（404 = 400 画布 + 左右各 2px 边框） */
+  #wrap { width:404px; display:flex; flex-direction:column; gap:8px; }
+
+  /* ---------- 游戏内 HUD（暂停按钮 + 分数框） ---------- */
+  #hud {
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity .18s ease, visibility .18s;
+  }
+  #hud.show { opacity: 1; visibility: visible; }
+
+  #pauseBtn {
+    width:40px; height:40px; padding:0;
+    display:flex; align-items:center; justify-content:center; gap:5px;
+    background:rgba(255,255,255,0.08);
+    border:2px solid rgba(255,255,255,0.35);
+    border-radius:8px;
+    cursor:pointer;
+    transition:background .15s, border-color .15s;
+  }
+  #pauseBtn .bar {
+    width:5px; height:16px; border-radius:1px; background:#eee;
+    transition:background .15s;
+  }
+  #pauseBtn:not(.disabled):hover {
+    background:rgba(46,204,113,0.28);
+    border-color:#2ecc71;
+  }
+  #pauseBtn:not(.disabled):hover .bar { background:#2ecc71; }
+  #pauseBtn.disabled { opacity:.35; cursor:default; }
+
+  #scoreBox {
+    min-width:120px; height:40px; padding:0 14px;
+    box-sizing:border-box;
+    display:flex; align-items:center; justify-content:center;
+    font:bold 18px/1 sans-serif;
+    color:#f1c40f;
+    background:rgba(255,255,255,0.06);
+    border:2px solid rgba(255,255,255,0.35);
+    border-radius:8px;
+    letter-spacing:1px;
+  }
+
+  /* ---------- 画布舞台 ---------- */
+  #stage {
+    position: relative;
+    width: 404px;
+    height: 404px;
+  }
+
+  canvas { background:#222; border:2px solid #555; display:block; }
+
+  /* ================================================================
+     菜单叠加层（主菜单 / 模式选择 / 暂停菜单 / 最高分）
+     ================================================================ */
+  .overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    overflow: hidden;
+  }
+  .overlay.hidden { display: none !important; }
+
+  #pauseOverlay { background: rgba(0, 0, 0, 0.30); }
+
+  .overlay-title {
+    position: absolute;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font: bold 60px/1 sans-serif;
+    color: #2ecc71;
+    text-shadow: 0 0 18px rgba(46, 204, 113, 0.6);
+    letter-spacing: 3px;
+    pointer-events: none;
+    user-select: none;
+    white-space: nowrap;
+  }
+  #menuOverlay .overlay-title { top: 115px; }
+
+  #pauseOverlay .overlay-title {
+    top: 130px;
+    font-size: 44px;
+    color: #f1c40f;
+    text-shadow: 0 0 16px rgba(241, 196, 15, 0.55);
+  }
+
+  #modeOverlay .overlay-title {
+    top: 75px;
+    font-size: 40px;
+    letter-spacing: 4px;
+  }
+
+  .overlay-line {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 180px;
+    height: 2px;
+    background: rgba(46, 204, 113, 0.35);
+    pointer-events: none;
+  }
+  #menuOverlay .overlay-line { top: 165px; }
+  #pauseOverlay .overlay-line {
+    top: 168px;
+    width: 160px;
+    background: rgba(241, 196, 15, 0.30);
+  }
+  #modeOverlay .overlay-line {
+    top: 108px;
+    width: 200px;
+  }
+
+  .options {
+    position: absolute;
+    inset: 0;
+  }
+
+  /* ---------- 选项：毛玻璃磨砂面板 ---------- */
+  .option {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    height: 54px;
+    padding: 0 40px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font: bold 28px/1 sans-serif;
+    color: #888;
+    border-radius: 10px;
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+    border: 1px solid transparent;
+    background: transparent;
+    transition: color .15s, background .2s, border-color .2s, box-shadow .2s, opacity .15s;
+  }
+
+  .option.selected {
+    color: #2ecc71;
+    background: rgba(255, 255, 255, 0.10);
+    border: 1px solid rgba(255, 255, 255, 0.30);
+    backdrop-filter: blur(10px) saturate(1.2);
+    -webkit-backdrop-filter: blur(10px) saturate(1.2);
+    box-shadow:
+      0 4px 20px rgba(0, 0, 0, 0.30),
+      inset 0 1px 0 rgba(255, 255, 255, 0.20),
+      inset 0 -1px 0 rgba(255, 255, 255, 0.05);
+  }
+
+  .option.selected::before,
+  .option.selected::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    width: 0;
+    height: 0;
+    border-style: solid;
+  }
+  .option.selected::before {
+    left: -20px;
+    transform: translateY(-50%);
+    border-width: 7px 10px 7px 0;
+    border-color: transparent #2ecc71 transparent transparent;
+  }
+  .option.selected::after {
+    right: -20px;
+    transform: translateY(-50%);
+    border-width: 7px 0 7px 10px;
+    border-color: transparent transparent transparent #2ecc71;
+  }
+
+  /* ---------- 未开放模式：略微变暗 + 右上角角标 ---------- */
+  .option.unavailable { opacity: 0.55; }
+  .option.unavailable.selected { color: #aaaaaa; }
+  .option.unavailable.selected::before,
+  .option.unavailable.selected::after {
+    border-color: transparent #aaaaaa transparent transparent;
+  }
+  .option.unavailable.selected::after {
+    border-color: transparent transparent transparent #aaaaaa;
+  }
+
+  .option .badge {
+    position: absolute;
+    top: -8px;
+    right: -14px;
+    padding: 2px 7px;
+    font: bold 10px/1.3 sans-serif;
+    letter-spacing: 0.5px;
+    color: #111;
+    background: rgba(241, 196, 15, 0.92);
+    border-radius: 4px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+    pointer-events: none;
+    white-space: nowrap;
+  }
+
+  /* ================================================================
+     历史最高分独立界面
+     ================================================================ */
+  #highScoreOverlay:not(.hidden) {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 22px;
+    text-align: center;
+    animation: noticeFade .18s ease;
+  }
+
+  .hs-header {
+    font: bold 34px/1 sans-serif;
+    color: #2ecc71;
+    text-shadow: 0 0 18px rgba(46, 204, 113, 0.55);
+    letter-spacing: 5px;
+  }
+
+  .hs-card {
+    padding: 24px 46px;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    backdrop-filter: blur(10px) saturate(1.2);
+    -webkit-backdrop-filter: blur(10px) saturate(1.2);
+    box-shadow:
+      0 8px 30px rgba(0, 0, 0, 0.40),
+      inset 0 1px 0 rgba(255, 255, 255, 0.20),
+      inset 0 -1px 0 rgba(255, 255, 255, 0.05);
+    min-width: 170px;
+  }
+
+  .hs-value {
+    font: bold 64px/1 sans-serif;
+    color: #f1c40f;
+    text-shadow: 0 0 20px rgba(241, 196, 15, 0.55);
+    letter-spacing: 2px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .hs-label {
+    margin-top: 12px;
+    font: 13px/1 sans-serif;
+    color: rgba(255, 255, 255, 0.55);
+    letter-spacing: 3px;
+  }
+
+  /* ---------- 版本号 ---------- */
+  #versionBadge {
+    position: absolute;
+    bottom: 10px;
+    right: 10px;
+    z-index: 4;
+    padding: 4px 8px;
+    font: 12px/1 sans-serif;
+    color: rgba(255, 255, 255, 0.55);
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.40);
+    border-radius: 4px;
+    pointer-events: none;
+    user-select: none;
+    letter-spacing: 1px;
+  }
+  #versionBadge.hidden { display: none; }
+
+  /* ---------- 公告按钮 ---------- */
+  #noticeBtn {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 5;
+    padding: 5px 14px;
+    font: 14px/1.2 sans-serif;
+    letter-spacing: 1px;
+    color: #2ecc71;
+    background: rgba(30,30,30,0.78);
+    border: 1px solid rgba(46,204,113,0.55);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background .15s, color .15s, border-color .15s, box-shadow .15s;
+  }
+  #noticeBtn:hover {
+    background: rgba(46,204,113,0.22);
+    border-color: #2ecc71;
+    color: #a9f5cb;
+    box-shadow: 0 0 10px rgba(46,204,113,0.35);
+  }
+  #noticeBtn:active { transform: translateY(1px); }
+
+  /* ---------- 历史最高分界面：返回主菜单按钮（画布左上角） ---------- */
+  #backBtn {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 6;
+    padding: 5px 14px;
+    font: 14px/1.2 sans-serif;
+    letter-spacing: 1px;
+    color: #2ecc71;
+    background: rgba(30,30,30,0.78);
+    border: 1px solid rgba(46,204,113,0.55);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background .15s, color .15s, border-color .15s, box-shadow .15s;
+  }
+  #backBtn:hover {
+    background: rgba(46,204,113,0.22);
+    border-color: #2ecc71;
+    color: #a9f5cb;
+    box-shadow: 0 0 10px rgba(46,204,113,0.35);
+  }
+  #backBtn:active { transform: translateY(1px); }
+  #backBtn.hidden { display: none; }
+
+  /* ---------- 模式选择界面：返回箭头按钮（画布左上角） ---------- */
+  #modeBackBtn {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 6;
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font: bold 22px/1 sans-serif;
+    color: #2ecc71;
+    background: rgba(30,30,30,0.78);
+    border: 1px solid rgba(46,204,113,0.55);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background .15s, color .15s, border-color .15s, box-shadow .15s, transform .1s;
+  }
+  #modeBackBtn:hover {
+    background: rgba(46,204,113,0.22);
+    border-color: #2ecc71;
+    color: #a9f5cb;
+    box-shadow: 0 0 10px rgba(46,204,113,0.35);
+  }
+  #modeBackBtn:active { transform: translateY(1px); }
+  #modeBackBtn.hidden { display: none; }
+
+  /* ---------- 独立公告栏 ---------- */
+  #noticePanel {
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,0.65);
+    animation: noticeFade .16s ease;
+  }
+  @keyframes noticeFade { from { opacity: 0; } to { opacity: 1; } }
+
+  .notice-card {
+    width: 302px;
+    max-height: 340px;
+    display: flex;
+    flex-direction: column;
+    background: #252525;
+    border: 2px solid #2ecc71;
+    border-radius: 10px;
+    box-shadow: 0 10px 34px rgba(0,0,0,0.75);
+    overflow: hidden;
+  }
+
+  .notice-header {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 9px 12px 9px 14px;
+    background: rgba(46,204,113,0.12);
+    border-bottom: 1px solid rgba(46,204,113,0.3);
+  }
+
+  .notice-title {
+    font: bold 16px/1 sans-serif;
+    color: #2ecc71;
+    letter-spacing: 2px;
+  }
+
+  .notice-close {
+    width: 26px; height: 26px; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: none;
+    border: none;
+    border-radius: 5px;
+    color: #888;
+    font: 20px/1 sans-serif;
+    cursor: pointer;
+    transition: background .15s, color .15s;
+  }
+  .notice-close:hover { background: rgba(255,255,255,0.12); color: #fff; }
+
+  .notice-content-wrap {
+    display: flex;
+    min-height: 120px;
+    max-height: 250px;
+    overflow: hidden;
+  }
+
+  .notice-body {
+    flex: 1;
+    min-width: 0;
+    padding: 14px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    font: 14px/1.75 sans-serif;
+    color: #ccc;
+    white-space: pre-wrap;
+    word-break: break-word;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .notice-body::-webkit-scrollbar { width: 0; height: 0; }
+
+  .notice-hint {
+    flex-shrink: 0;
+    padding: 6px 12px;
+    font: 11px/1.4 sans-serif;
+    color: rgba(255, 255, 255, 0.34);
+    letter-spacing: 0.5px;
+    text-align: center;
+    background: rgba(0, 0, 0, 0.30);
+    border-top: 1px solid rgba(46, 204, 113, 0.16);
+    user-select: none;
+  }
+
+  .notice-scrollbar {
+    flex-shrink: 0;
+    width: 16px;
+    display: flex;
+    flex-direction: column;
+    background: rgba(0,0,0,0.30);
+    border-left: 1px solid rgba(46,204,113,0.20);
+  }
+
+  .sb-btn {
+    flex-shrink: 0;
+    height: 18px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255,255,255,0.05);
+    border: none;
+    color: #888;
+    font: 9px/1 sans-serif;
+    cursor: pointer;
+    transition: background .15s, color .15s;
+  }
+  .sb-btn:hover { background: rgba(46,204,113,0.28); color: #2ecc71; }
+  .sb-btn:active { background: rgba(46,204,113,0.45); color: #a9f5cb; }
+
+  .sb-track {
+    flex: 1;
+    position: relative;
+    background: rgba(255,255,255,0.03);
+  }
+
+  .sb-thumb {
+    position: absolute;
+    left: 2px;
+    right: 2px;
+    top: 0;
+    display: none;
+    background: rgba(46,204,113,0.55);
+    border-radius: 4px;
+    cursor: grab;
+    transition: background .15s;
+  }
+  .sb-thumb:hover { background: rgba(46,204,113,0.85); }
+  .sb-thumb:active { cursor: grabbing; background: #2ecc71; }
+
+  #noticeBtn.hidden,
+  #noticePanel.hidden { display: none; }
+
+  #tip { margin-top:10px; font-size:14px; color:#888; text-align:center; line-height:1.6; }
+  #tip:empty { margin-top:0; }
+  #tip.flash { color: #f1c40f; font-weight: bold; letter-spacing: 1px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+
+  <!-- ===== 游戏内 HUD ===== -->
+  <div id="hud">
+    <button id="pauseBtn" title="暂停" aria-label="暂停">
+      <span class="bar"></span><span class="bar"></span>
+    </button>
+    <div id="scoreBox">分数：0</div>
+  </div>
+
+  <!-- ===== 画布舞台 ===== -->
+  <div id="stage">
+    <canvas id="game" width="400" height="400"></canvas>
+
+    <!-- ===== 主菜单（HTML 叠加层） ===== -->
+    <div id="menuOverlay" class="overlay">
+      <div class="overlay-title">贪吃蛇</div>
+      <div class="overlay-line"></div>
+      <div class="options" id="menuOptions"></div>
+    </div>
+
+    <!-- ===== 模式选择（HTML 叠加层） ===== -->
+    <div id="modeOverlay" class="overlay hidden">
+      <div class="overlay-title">选 择 模 式</div>
+      <div class="overlay-line"></div>
+      <div class="options" id="modeOptions"></div>
+    </div>
+
+    <!-- ===== 暂停菜单（HTML 叠加层） ===== -->
+    <div id="pauseOverlay" class="overlay hidden">
+      <div class="overlay-title">暂 停</div>
+      <div class="overlay-line"></div>
+      <div class="options" id="pauseOptions"></div>
+    </div>
+
+    <!-- ===== 历史最高分（独立界面） ===== -->
+    <div id="highScoreOverlay" class="overlay hidden">
+      <div class="hs-header">历史最高分</div>
+      <div class="hs-card">
+        <div class="hs-value" id="hsValue">0</div>
+        <div class="hs-label">本机最高记录</div>
+      </div>
+    </div>
+
+    <!-- 版本号 -->
+    <div id="versionBadge">v2.1</div>
+
+    <!-- 公告按钮：仅主菜单显示 -->
+    <button id="noticeBtn" class="hidden">公告</button>
+
+    <!-- 返回主菜单按钮：仅历史最高分界面显示 -->
+    <button id="backBtn" class="hidden" title="返回主菜单" aria-label="返回主菜单">返回主菜单</button>
+
+    <!-- 返回箭头按钮：仅模式选择界面显示 -->
+    <button id="modeBackBtn" class="hidden" title="返回主菜单" aria-label="返回主菜单">←</button>
+
+    <!-- 独立公告栏 -->
+    <div id="noticePanel" class="hidden">
+      <div class="notice-card">
+        <div class="notice-header">
+          <span class="notice-title">公 告</span>
+          <button class="notice-close" id="noticeClose" title="关闭" aria-label="关闭">×</button>
+        </div>
+
+        <div class="notice-content-wrap">
+          <div class="notice-body" id="noticeBody">【更新公告】
+
+亲爱的玩家：
+
+为了带来更清爽、更舒适的游戏体验，本次更新对界面和功能进行了优化，具体内容如下：
+
+一、界面布局优化
+暂停按钮与分数展示已移至游戏画面上方，游戏区域更加干净整洁。
+
+二、分数显示调整
+分数现在独立显示在上方信息栏中，游戏结束后会在画面中央展示本局得分。
+
+三、新增公告栏功能
+主菜单左上角新增“公告”按钮，点击即可查看最新公告。进入游戏、暂停或结算时，公告按钮会自动隐藏，不会干扰您的操作。
+
+四、公告栏支持上下滑动
+内容较长时，可通过右侧上下箭头按钮、拖动滑块，或使用鼠标滚轮 / 触控板上下滑动查看。
+
+五、暂停菜单新增“继续游戏”
+暂停后可直接选择“继续游戏”，无缝恢复当前对局；也可用 Esc 键快速继续。
+
+六、操作方式保持不变
+方向键或 W/A/S/D 控制移动，空格确认，Esc 暂停或返回。
+
+七、新增简单模式
+简单模式下蛇移动速度更慢，场上同时存在 3 个食物，方便新手体验。后续模式将逐步开放。
+
+感谢您的支持，祝您游戏愉快！</div>
+
+          <div class="notice-scrollbar" id="noticeScrollbar">
+            <button class="sb-btn" id="sbUp" title="向上" aria-label="向上">▲</button>
+            <div class="sb-track" id="sbTrack">
+              <div class="sb-thumb" id="sbThumb"></div>
+            </div>
+            <button class="sb-btn" id="sbDown" title="向下" aria-label="向下">▼</button>
+          </div>
+        </div>
+
+        <div class="notice-hint">滚轮 / 拖动滑块 / 点击箭头可滚动</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+<div id="tip"></div>
+
+<script>
+const canvas   = document.getElementById('game');
+const ctx      = canvas.getContext('2d');
+const tipEl    = document.getElementById('tip');
+const hudEl    = document.getElementById('hud');
+const scoreBox = document.getElementById('scoreBox');
+const pauseBtn = document.getElementById('pauseBtn');
+
+/* 菜单叠加层 DOM */
+const menuOverlay      = document.getElementById('menuOverlay');
+const modeOverlay      = document.getElementById('modeOverlay');
+const pauseOverlay     = document.getElementById('pauseOverlay');
+const highScoreOverlay = document.getElementById('highScoreOverlay');
+const menuOptionsEl    = document.getElementById('menuOptions');
+const modeOptionsEl    = document.getElementById('modeOptions');
+const pauseOptionsEl   = document.getElementById('pauseOptions');
+const versionBadge     = document.getElementById('versionBadge');
+const hsValueEl        = document.getElementById('hsValue');
+
+/* 公告栏 DOM */
+const noticeBtn   = document.getElementById('noticeBtn');
+const noticePanel = document.getElementById('noticePanel');
+const noticeClose = document.getElementById('noticeClose');
+const noticeBody  = document.getElementById('noticeBody');
+
+/* 返回按钮 DOM */
+const backBtn     = document.getElementById('backBtn');
+const modeBackBtn = document.getElementById('modeBackBtn');
+
+const sbUp    = document.getElementById('sbUp');
+const sbDown  = document.getElementById('sbDown');
+const sbTrack = document.getElementById('sbTrack');
+const sbThumb = document.getElementById('sbThumb');
+
+const box  = 20;
+const cols = canvas.width / box;
+const rows = canvas.height / box;
+
+/* ================================================================
+   全局游戏配置（参数化核心）
+   —— speed：每步间隔毫秒数，越大越慢
+   —— foodCount：场上同时存在的食物数量
+   —— currentMode：当前模式显示名
+   ================================================================ */
+let gameConfig = {
+  speed: 150,
+  foodCount: 1,
+  currentMode: '普通'
+};
+
+/* 模式预设表：集中管理各模式的参数，避免散落在逻辑分支中 */
+const MODE_PRESETS = {
+  easy:   { speed: 220, foodCount: 3, name: '简单' },
+  normal: { speed: 150, foodCount: 1, name: '普通' }
+};
+
+/* ---------- 历史最高分（localStorage 持久化） ---------- */
+const HS_KEY = 'snake_high_score';
+let highScore = 0;
+try {
+  highScore = parseInt(localStorage.getItem(HS_KEY) || '0', 10) || 0;
+} catch (e) {
+  highScore = 0;
+}
+
+function saveHighScore() {
+  try {
+    localStorage.setItem(HS_KEY, String(highScore));
+  } catch (e) {
+    /* 隐私模式 / 禁用存储时静默降级 */
+  }
+}
+
+/* ---------- 菜单配置 ---------- */
+const MENU_Y        = [230, 300];
+const MODE_OPTION_Y = [160, 220, 280, 340];
+const PAUSE_OPTION_Y = [200, 260, 320];
+const OPTION_H = 54;
+
+const menuOptions = [
+  { text: '开始游戏',       action: showModeSelect },
+  { text: '查看历史最高分', action: showHighScore  }
+];
+
+/* 模式选项：简单与普通已开放；困难、地狱仍为占位符 */
+const modeOptions = [
+  { text: '简单', key: 'easy',   available: true  },
+  { text: '普通', key: 'normal', available: true  },
+  { text: '困难', key: 'hard',   available: false, badge: '敬请期待' },
+  { text: '地狱', key: 'hell',   available: false, badge: '敬请期待' }
+];
+
+const pauseOptions = [
+  { text: '继续游戏',   action: resumeGame },
+  { text: '退回主菜单', action: showMenu   },
+  { text: '重新开始',   action: startGame  }
+];
+
+/* ---------- 全局状态 ---------- */
+let state = 'menu';   // menu | mode | highscore | playing | paused | over
+let menuIndex = 0;
+let modeIndex = 1;    // 默认停在“普通”
+let pauseIndex = 0;
+
+let snake, dir, nextDir, timer;
+let foods = [];       // 食物数组（替代原单例 food）
+let score = 0;
+
+let noticeOpen = false;
+let tipTimeout = null;
+
+/* ================================================================
+   菜单 DOM 渲染
+   ================================================================ */
+
+function buildOptions(container, options, ys, onHover, onActivate) {
+  container.innerHTML = '';
+  options.forEach((opt, i) => {
+    const el = document.createElement('div');
+    el.className = 'option';
+    el.textContent = opt.text;
+    if (opt.available === false) el.classList.add('unavailable');
+    el.style.top = (ys[i] - OPTION_H / 2) + 'px';
+    el.dataset.index = i;
+
+    if (opt.badge) {
+      const badge = document.createElement('span');
+      badge.className = 'badge';
+      badge.textContent = opt.badge;
+      el.appendChild(badge);
+    }
+
+    el.addEventListener('mouseenter', () => onHover(i));
+    el.addEventListener('click', () => {
+      onHover(i);
+      onActivate(i);
+    });
+
+    container.appendChild(el);
+  });
+}
+
+function updateSelection(container, index) {
+  const children = container.children;
+  for (let i = 0; i < children.length; i++) {
+    children[i].classList.toggle('selected', i === index);
+  }
+}
+
+/* 初始化三套选项 */
+buildOptions(
+  menuOptionsEl, menuOptions, MENU_Y,
+  (i) => {
+    if (menuIndex !== i) {
+      menuIndex = i;
+      updateSelection(menuOptionsEl, menuIndex);
+    }
+  },
+  (i) => { menuOptions[i].action(); }
+);
+
+buildOptions(
+  modeOptionsEl, modeOptions, MODE_OPTION_Y,
+  (i) => {
+    if (modeIndex !== i) {
+      modeIndex = i;
+      updateSelection(modeOptionsEl, modeIndex);
+    }
+  },
+  (i) => { activateMode(i); }
+);
+
+buildOptions(
+  pauseOptionsEl, pauseOptions, PAUSE_OPTION_Y,
+  (i) => {
+    if (pauseIndex !== i) {
+      pauseIndex = i;
+      updateSelection(pauseOptionsEl, pauseIndex);
+    }
+  },
+  (i) => { pauseOptions[i].action(); }
+);
+
+/* ================================================================
+   模式激活：将预设参数注入 gameConfig
+   —— 高内聚低耦合：具体数值都来自 MODE_PRESETS，不散落在逻辑里
+   ================================================================ */
+function activateMode(i) {
+  const opt = modeOptions[i];
+
+  if (!opt.available) {
+    flashTip('「' + opt.text + '」模式敬请期待，请先体验普通模式');
+    return;
+  }
+
+  const preset = MODE_PRESETS[opt.key];
+  if (preset) {
+    gameConfig.speed       = preset.speed;
+    gameConfig.foodCount   = preset.foodCount;
+    gameConfig.currentMode = preset.name;
+  }
+
+  startGame();
+}
+
+/* 临时高亮底部提示（自动恢复为当前状态的提示文字） */
+function flashTip(text, duration = 2200) {
+  if (tipTimeout) clearTimeout(tipTimeout);
+  tipEl.textContent = text;
+  tipEl.classList.add('flash');
+  tipTimeout = setTimeout(() => {
+    tipTimeout = null;
+    tipEl.classList.remove('flash');
+    updateTip();
+  }, duration);
+}
+
+/* ================================================================
+   HUD 控制
+   ================================================================ */
+
+function showHud() { hudEl.classList.add('show'); }
+
+function hideHud() {
+  hudEl.classList.remove('show');
+  pauseBtn.classList.add('disabled');
+}
+
+function updateScore() { scoreBox.textContent = '分数：' + (score || 0); }
+
+function setPauseBtnEnabled(on) {
+  pauseBtn.classList.toggle('disabled', !on);
+}
+
+pauseBtn.addEventListener('click', () => {
+  pauseBtn.blur();
+  if (state === 'playing') pauseGame();
+});
+
+/* ================================================================
+   返回按钮控制
+   ================================================================ */
+
+function setBackBtnVisible(on) {
+  backBtn.classList.toggle('hidden', !on);
+}
+
+function setModeBackBtnVisible(on) {
+  modeBackBtn.classList.toggle('hidden', !on);
+}
+
+backBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  backBtn.blur();
+  if (state === 'highscore') showMenu();
+});
+
+modeBackBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  modeBackBtn.blur();
+  if (state === 'mode') showMenu();
+});
+
+/* ================================================================
+   公告栏控制
+   ================================================================ */
+
+function setNoticeUiVisible(on) {
+  noticeBtn.classList.toggle('hidden', !on);
+  if (!on) closeNotice();
+}
+
+function openNotice() {
+  if (state !== 'menu') return;
+  noticeOpen = true;
+  noticePanel.classList.remove('hidden');
+  noticeBtn.classList.add('hidden');
+  requestAnimationFrame(updateScrollbar);
+}
+
+function closeNotice() {
+  noticeOpen = false;
+  noticePanel.classList.add('hidden');
+  noticeBtn.classList.toggle('hidden', state !== 'menu');
+}
+
+noticeBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  noticeBtn.blur();
+  openNotice();
+});
+
+noticeClose.addEventListener('click', e => {
+  e.stopPropagation();
+  closeNotice();
+});
+
+noticePanel.addEventListener('click', e => {
+  if (e.target === noticePanel) closeNotice();
+});
+
+/* ================================================================
+   公告栏自定义滚动条
+   ================================================================ */
+
+const SCROLL_STEP = 40;
+
+function updateScrollbar() {
+  const trackH = sbTrack.clientHeight;
+  const contentH = noticeBody.scrollHeight;
+  const viewH    = noticeBody.clientHeight;
+
+  if (trackH <= 0 || contentH <= viewH) {
+    sbThumb.style.display = 'none';
+    return;
+  }
+  sbThumb.style.display = 'block';
+
+  const ratio = viewH / contentH;
+  const thumbH = Math.max(18, Math.floor(trackH * ratio));
+  sbThumb.style.height = thumbH + 'px';
+
+  const maxScroll   = contentH - viewH;
+  const maxThumbTop = trackH - thumbH;
+  const scrollRatio = maxScroll > 0 ? (noticeBody.scrollTop / maxScroll) : 0;
+  sbThumb.style.top = Math.round(scrollRatio * maxThumbTop) + 'px';
+}
+
+noticeBody.addEventListener('scroll', updateScrollbar);
+
+sbUp.addEventListener('click', () => { noticeBody.scrollTop -= SCROLL_STEP; });
+sbDown.addEventListener('click', () => { noticeBody.scrollTop += SCROLL_STEP; });
+
+sbTrack.addEventListener('click', e => {
+  if (e.target !== sbTrack) return;
+  const rect = sbTrack.getBoundingClientRect();
+  const ratio = (e.clientY - rect.top) / rect.height;
+  const maxScroll = noticeBody.scrollHeight - noticeBody.clientHeight;
+  noticeBody.scrollTop = ratio * maxScroll;
+});
+
+let dragState = null;
+
+sbThumb.addEventListener('mousedown', e => {
+  dragState = {
+    startY:      e.clientY,
+    startScroll: noticeBody.scrollTop,
+    trackH:      sbTrack.clientHeight,
+    thumbH:      sbThumb.clientHeight,
+    maxScroll:   noticeBody.scrollHeight - noticeBody.clientHeight
+  };
+  document.body.style.userSelect = 'none';
+  e.preventDefault();
+});
+
+document.addEventListener('mousemove', e => {
+  if (!dragState) return;
+  const deltaY = e.clientY - dragState.startY;
+  const maxThumbTop = dragState.trackH - dragState.thumbH;
+  if (maxThumbTop <= 0) return;
+  const scrollDelta = (deltaY / maxThumbTop) * dragState.maxScroll;
+  noticeBody.scrollTop = dragState.startScroll + scrollDelta;
+});
+
+document.addEventListener('mouseup', () => {
+  if (!dragState) return;
+  dragState = null;
+  document.body.style.userSelect = '';
+});
+
+window.addEventListener('resize', () => {
+  if (noticeOpen) updateScrollbar();
+});
+
+/* ================= 主菜单背景绘制 ================= */
+
+function drawMenu() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#222';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const glow = ctx.createRadialGradient(
+    canvas.width / 2, 140, 30,
+    canvas.width / 2, 140, 280
+  );
+  glow.addColorStop(0, 'rgba(46,204,113,0.14)');
+  glow.addColorStop(1, 'rgba(46,204,113,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.032)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let x = 0; x <= canvas.width; x += 20) {
+    ctx.moveTo(x + 0.5, 0);
+    ctx.lineTo(x + 0.5, canvas.height);
+  }
+  for (let y = 0; y <= canvas.height; y += 20) {
+    ctx.moveTo(0, y + 0.5);
+    ctx.lineTo(canvas.width, y + 0.5);
+  }
+  ctx.stroke();
+}
+
+/* ================= 叠加层显示控制 ================= */
+
+function hideAllOverlays() {
+  menuOverlay.classList.add('hidden');
+  modeOverlay.classList.add('hidden');
+  pauseOverlay.classList.add('hidden');
+  highScoreOverlay.classList.add('hidden');
+}
+
+function showMenuUI() {
+  hideAllOverlays();
+  menuOverlay.classList.remove('hidden');
+  versionBadge.classList.remove('hidden');
+  setBackBtnVisible(false);
+  setModeBackBtnVisible(false);
+  updateSelection(menuOptionsEl, menuIndex);
+}
+
+function showModeUI() {
+  hideAllOverlays();
+  modeOverlay.classList.remove('hidden');
+  versionBadge.classList.remove('hidden');
+  setBackBtnVisible(false);
+  setModeBackBtnVisible(true);
+  updateSelection(modeOptionsEl, modeIndex);
+}
+
+function showPauseUI() {
+  hideAllOverlays();
+  pauseOverlay.classList.remove('hidden');
+  versionBadge.classList.add('hidden');
+  setBackBtnVisible(false);
+  setModeBackBtnVisible(false);
+  updateSelection(pauseOptionsEl, pauseIndex);
+}
+
+function showHighScoreUI() {
+  hideAllOverlays();
+  highScoreOverlay.classList.remove('hidden');
+  versionBadge.classList.remove('hidden');
+  setBackBtnVisible(true);
+  setModeBackBtnVisible(false);
+  hsValueEl.textContent = highScore;
+}
+
+/* ================= 状态切换 ================= */
+
+function showMenu() {
+  clearInterval(timer);
+  state = 'menu';
+  menuIndex = 0;
+  canvas.style.cursor = 'default';
+  hideHud();
+  setNoticeUiVisible(true);
+  drawMenu();
+  showMenuUI();
+  updateTip();
+}
+
+/* 进入模式选择 */
+function showModeSelect() {
+  clearInterval(timer);
+  state = 'mode';
+  modeIndex = 1;                  // 默认高亮“普通”
+  canvas.style.cursor = 'default';
+  hideHud();
+  setNoticeUiVisible(false);
+  drawMenu();
+  showModeUI();
+  updateTip();
+}
+
+/* 历史最高分独立界面 */
+function showHighScore() {
+  clearInterval(timer);
+  state = 'highscore';
+  canvas.style.cursor = 'default';
+  hideHud();
+  setNoticeUiVisible(false);
+  drawMenu();
+  showHighScoreUI();
+  updateTip();
+}
+
+/* ================= 暂停 ================= */
+
+function pauseGame() {
+  if (state !== 'playing') return;
+  state = 'paused';
+  clearInterval(timer);
+  pauseIndex = 0;
+  canvas.style.cursor = 'default';
+  setPauseBtnEnabled(false);
+  drawPause();
+  showPauseUI();
+  updateTip();
+}
+
+function resumeGame() {
+  if (state !== 'paused') return;
+  state = 'playing';
+  /* 先清理再设置，避免计时器叠加 */
+  clearInterval(timer);
+  timer = setInterval(loop, gameConfig.speed);
+  setPauseBtnEnabled(true);
+  pauseOverlay.classList.add('hidden');
+  draw();
+  updateTip();
+}
+
+function drawPause() {
+  draw();
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+
+/* ================= 游戏逻辑 ================= */
+
+function startGame() {
+  state = 'playing';
+  snake = [{x: 10, y: 10}];
+  dir = {x: 1, y: 0};
+  nextDir = {x: 1, y: 0};
+  score = 0;
+  updateScore();
+
+  /* 初始化食物数组，并按当前配置补齐数量 */
+  foods = [];
+  ensureFoodCount();
+
+  canvas.style.cursor = 'default';
+  showHud();
+  setNoticeUiVisible(false);
+  setPauseBtnEnabled(true);
+
+  hideAllOverlays();
+  versionBadge.classList.add('hidden');
+  setBackBtnVisible(false);
+  setModeBackBtnVisible(false);
+
+  /* 严格先清理再设置计时器，避免速度切换时叠加 */
+  clearInterval(timer);
+  timer = setInterval(loop, gameConfig.speed);
+  draw();
+  updateTip();
+}
+
+/* ================================================================
+   食物生成：支持多食物，避免与蛇身及已有食物重叠
+   ================================================================ */
+
+/* 尝试生成一个不与蛇身、已有食物重叠的坐标；棋盘满时返回 null */
+function spawnOneFood() {
+  const totalCells = cols * rows;
+  /* 棋盘被完全占满时放弃（理论上极少发生） */
+  if (snake.length + foods.length >= totalCells) return null;
+
+  /* 使用最大尝试次数作为防御，避免极端情况下死循环 */
+  const MAX_TRIES = 1000;
+  for (let tries = 0; tries < MAX_TRIES; tries++) {
+    const candidate = {
+      x: Math.floor(Math.random() * cols),
+      y: Math.floor(Math.random() * rows)
+    };
+    const onSnake = snake.some(s => s.x === candidate.x && s.y === candidate.y);
+    const onFood  = foods.some(f => f.x === candidate.x && f.y === candidate.y);
+    if (!onSnake && !onFood) return candidate;
+  }
+  return null;
+}
+
+/* 将场上食物数量补齐到 gameConfig.foodCount */
+function ensureFoodCount() {
+  while (foods.length < gameConfig.foodCount) {
+    const f = spawnOneFood();
+    if (!f) break;    // 棋盘已满，安全退出
+    foods.push(f);
+  }
+}
+
+function loop() {
+  if (state !== 'playing') return;
+
+  dir = nextDir;
+  const head = {x: snake[0].x + dir.x, y: snake[0].y + dir.y};
+
+  /* 撞墙 */
+  if (head.x < 0 || head.x >= cols || head.y < 0 || head.y >= rows) {
+    return gameOver();
+  }
+  /* 撞到自己 */
+  if (snake.some(s => s.x === head.x && s.y === head.y)) {
+    return gameOver();
+  }
+
+  snake.unshift(head);
+
+  /* 遍历 foods 数组判断是否吃到食物 */
+  const hitIndex = foods.findIndex(f => f.x === head.x && f.y === head.y);
+  if (hitIndex !== -1) {
+    foods.splice(hitIndex, 1);
+    score++;
+    updateScore();
+    ensureFoodCount();   // 立即补齐到配置数量
+  } else {
+    snake.pop();
+  }
+
+  draw();
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  /* 遍历 foods 数组渲染所有食物 */
+  ctx.fillStyle = '#e74c3c';
+  foods.forEach(f => {
+    ctx.fillRect(f.x * box, f.y * box, box - 2, box - 2);
+  });
+
+  snake.forEach((s, i) => {
+    ctx.fillStyle = i === 0 ? '#2ecc71' : '#27ae60';
+    ctx.fillRect(s.x * box, s.y * box, box - 2, box - 2);
+  });
+}
+
+function gameOver() {
+  state = 'over';
+  clearInterval(timer);
+  canvas.style.cursor = 'default';
+  hideHud();
+  setNoticeUiVisible(false);
+
+  hideAllOverlays();
+  versionBadge.classList.add('hidden');
+  setBackBtnVisible(false);
+  setModeBackBtnVisible(false);
+
+  const isNewRecord = score > highScore;
+  if (isNewRecord) {
+    highScore = score;
+    saveHighScore();
+  }
+
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  ctx.fillStyle = '#fff';
+  ctx.font = '30px sans-serif';
+  ctx.fillText('游戏结束', canvas.width / 2, canvas.height / 2 - 80);
+
+  ctx.font = 'bold 22px sans-serif';
+  ctx.fillStyle = '#f1c40f';
+  ctx.fillText('本局得分：' + score, canvas.width / 2, canvas.height / 2 - 38);
+
+  /* 模式提示（从 gameConfig 读取，保证与当前对局一致） */
+  ctx.font = '18px sans-serif';
+  ctx.fillStyle = '#2ecc71';
+  ctx.fillText('模式：' + gameConfig.currentMode, canvas.width / 2, canvas.height / 2 - 2);
+
+  /* 历史最高分（破纪录时高亮） */
+  ctx.font = '18px sans-serif';
+  if (isNewRecord) {
+    ctx.fillStyle = '#2ecc71';
+    ctx.fillText('★ 新纪录！历史最高分：' + highScore, canvas.width / 2, canvas.height / 2 + 34);
+  } else {
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    ctx.fillText('历史最高分：' + highScore, canvas.width / 2, canvas.height / 2 + 34);
+  }
+
+  ctx.font = '18px sans-serif';
+  ctx.fillStyle = '#fff';
+  ctx.fillText('按空格重新开始', canvas.width / 2, canvas.height / 2 + 74);
+  ctx.fillText('按 Esc 返回主菜单', canvas.width / 2, canvas.height / 2 + 104);
+
+  updateTip();
+}
+
+/* ================= 底部说明文字 ================= */
+
+function updateTip() {
+  if (tipTimeout) return;
+
+  if (state === 'menu') {
+    tipEl.innerHTML = 'W / S 或 ↑ / ↓ 选择，空格确认，也可以用鼠标点击<br>左上角「公告」可查看公告';
+  } else if (state === 'mode') {
+    tipEl.innerHTML = 'W / S 或 ↑ / ↓ 选择模式，空格确认，Esc 返回<br>目前开放「简单」「普通」模式，其余敬请期待';
+  } else if (state === 'highscore') {
+    tipEl.innerHTML = '点击左上角「返回主菜单」或按空格 / Enter / Esc 返回主菜单';
+  } else if (state === 'playing') {
+    tipEl.innerHTML = '方向键 或 W/A/S/D 控制移动（大小写均可）<br>点击上方暂停按钮或按 Esc 暂停';
+  } else if (state === 'paused') {
+    tipEl.innerHTML = 'W / S 或 ↑ / ↓ 选择，空格确认，也可鼠标点击<br>按 Esc 直接继续游戏';
+  } else if (state === 'over') {
+    tipEl.innerHTML = '';
+  } else {
+    tipEl.innerHTML = '按空格键返回主菜单';
+  }
+}
+
+/* ================= 键盘操作 ================= */
+
+document.addEventListener('keydown', e => {
+  const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+
+  if (noticeOpen) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeNotice();
+    }
+    return;
+  }
+
+  /* ---- 历史最高分界面 ---- */
+  if (state === 'highscore') {
+    if (key === ' ' || e.key === 'Enter' || e.key === 'Escape') {
+      e.preventDefault();
+      showMenu();
+    }
+    return;
+  }
+
+  /* ---- 模式选择界面 ---- */
+  if (state === 'mode') {
+    if (key === 'w' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      modeIndex = (modeIndex - 1 + modeOptions.length) % modeOptions.length;
+      updateSelection(modeOptionsEl, modeIndex);
+    } else if (key === 's' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      modeIndex = (modeIndex + 1) % modeOptions.length;
+      updateSelection(modeOptionsEl, modeIndex);
+    } else if (key === ' ' || e.key === 'Enter') {
+      e.preventDefault();
+      activateMode(modeIndex);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      showMenu();
+    }
+    return;
+  }
+
+  if (state === 'menu') {
+    if (key === 'w' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      menuIndex = (menuIndex - 1 + menuOptions.length) % menuOptions.length;
+      updateSelection(menuOptionsEl, menuIndex);
+    } else if (key === 's' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      menuIndex = (menuIndex + 1) % menuOptions.length;
+      updateSelection(menuOptionsEl, menuIndex);
+    } else if (key === ' ' || e.key === 'Enter') {
+      e.preventDefault();
+      menuOptions[menuIndex].action();
+    }
+    return;
+  }
+
+  if (state === 'playing') {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      pauseGame();
+      return;
+    }
+    if (e.key === 'ArrowUp' || key === 'w') {
+      e.preventDefault();
+      if (dir.y === 0) nextDir = {x: 0, y: -1};
+    } else if (e.key === 'ArrowDown' || key === 's') {
+      e.preventDefault();
+      if (dir.y === 0) nextDir = {x: 0, y: 1};
+    } else if (e.key === 'ArrowLeft' || key === 'a') {
+      e.preventDefault();
+      if (dir.x === 0) nextDir = {x: -1, y: 0};
+    } else if (e.key === 'ArrowRight' || key === 'd') {
+      e.preventDefault();
+      if (dir.x === 0) nextDir = {x: 1, y: 0};
+    }
+    return;
+  }
+
+  if (state === 'paused') {
+    if (key === 'w' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      pauseIndex = (pauseIndex - 1 + pauseOptions.length) % pauseOptions.length;
+      updateSelection(pauseOptionsEl, pauseIndex);
+    } else if (key === 's' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      pauseIndex = (pauseIndex + 1) % pauseOptions.length;
+      updateSelection(pauseOptionsEl, pauseIndex);
+    } else if (key === ' ' || e.key === 'Enter') {
+      e.preventDefault();
+      pauseOptions[pauseIndex].action();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      resumeGame();
+    }
+    return;
+  }
+
+  if (state === 'over') {
+    if (key === ' ') {
+      e.preventDefault();
+      /* 重开时沿用当前模式配置 */
+      startGame();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      showMenu();
+    }
+    return;
+  }
+});
+
+/* ================= 启动 ================= */
+
+updateScore();
+showMenu();
+</script>
+</body>
+</html>
